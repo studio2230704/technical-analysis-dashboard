@@ -1,4 +1,4 @@
-"""LINE Messaging API integration for stock alerts."""
+"""Notification integrations for stock alerts (LINE, Google Chat)."""
 
 import os
 from dataclasses import dataclass
@@ -13,6 +13,48 @@ class NotificationResult:
     success: bool
     message: str
 
+
+# =============================================================================
+# Google Chat
+# =============================================================================
+
+def send_google_chat_message(message: str, webhook_url: str | None = None) -> NotificationResult:
+    """Send notification via Google Chat Webhook.
+
+    Args:
+        message: Message to send
+        webhook_url: Google Chat Webhook URL. If None, reads from GOOGLE_CHAT_WEBHOOK_URL env var.
+
+    Returns:
+        NotificationResult with success status and message
+    """
+    webhook_url = webhook_url or os.getenv("GOOGLE_CHAT_WEBHOOK_URL")
+
+    if not webhook_url:
+        return NotificationResult(
+            success=False,
+            message="GOOGLE_CHAT_WEBHOOK_URL not configured"
+        )
+
+    data = {"text": message.strip()}
+
+    try:
+        response = requests.post(webhook_url, json=data, timeout=10)
+
+        if response.status_code == 200:
+            return NotificationResult(success=True, message="Message sent to Google Chat")
+        else:
+            return NotificationResult(
+                success=False,
+                message=f"Google Chat API error: {response.status_code}"
+            )
+    except requests.RequestException as e:
+        return NotificationResult(success=False, message=f"Request failed: {e}")
+
+
+# =============================================================================
+# LINE Messaging API
+# =============================================================================
 
 def send_line_message(message: str, user_id: str | None = None, channel_access_token: str | None = None) -> NotificationResult:
     """Send notification via LINE Messaging API.
@@ -72,6 +114,56 @@ def send_line_message(message: str, user_id: str | None = None, channel_access_t
 
 # Alias for backward compatibility
 send_line_notification = send_line_message
+
+
+# =============================================================================
+# Unified Notification Sender
+# =============================================================================
+
+def send_notification(message: str) -> NotificationResult:
+    """Send notification to all configured channels.
+
+    Tries Google Chat first (if configured), then LINE.
+    Returns success if at least one channel succeeds.
+
+    Args:
+        message: Message to send
+
+    Returns:
+        NotificationResult with combined status
+    """
+    results = []
+
+    # Try Google Chat
+    if os.getenv("GOOGLE_CHAT_WEBHOOK_URL"):
+        result = send_google_chat_message(message)
+        results.append(("Google Chat", result))
+
+    # Try LINE
+    if os.getenv("LINE_CHANNEL_ACCESS_TOKEN") and os.getenv("LINE_USER_ID"):
+        result = send_line_message(message)
+        results.append(("LINE", result))
+
+    if not results:
+        return NotificationResult(
+            success=False,
+            message="No notification channels configured"
+        )
+
+    # Check if any succeeded
+    successes = [name for name, r in results if r.success]
+    failures = [f"{name}: {r.message}" for name, r in results if not r.success]
+
+    if successes:
+        return NotificationResult(
+            success=True,
+            message=f"Sent via: {', '.join(successes)}"
+        )
+    else:
+        return NotificationResult(
+            success=False,
+            message=f"All channels failed - {'; '.join(failures)}"
+        )
 
 
 def format_golden_cross_alert(ticker: str, price: float, date: str) -> str:

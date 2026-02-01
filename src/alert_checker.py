@@ -14,7 +14,7 @@ from notifier import (
     format_golden_cross_alert,
     format_rsi_alert,
     format_dead_cross_alert,
-    send_line_notification,
+    send_notification,
 )
 
 
@@ -282,17 +282,17 @@ def run_alert_check(watchlist_path: str | Path) -> list[Alert]:
 
 
 def send_alerts(alerts: list[Alert]) -> None:
-    """Send all alerts via LINE Notify.
+    """Send all alerts via configured notification channels.
 
     Args:
         alerts: List of alerts to send
     """
     for alert in alerts:
         print(f"Sending alert: {alert.alert_type} for {alert.ticker}")
-        result = send_line_notification(alert.message)
+        result = send_notification(alert.message)
 
         if result.success:
-            print(f"  ✓ Sent successfully")
+            print(f"  ✓ {result.message}")
         else:
             print(f"  ✗ Failed: {result.message}")
 
