@@ -2,6 +2,9 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
 from pathlib import Path
 
 from data import fetch_stock_data, get_stock_info, get_current_price
@@ -9,6 +12,7 @@ from indicators import add_all_indicators
 from signals import detect_all_signals, Signal
 from charts import create_candlestick_chart
 from watchlist_manager import WatchlistManager, StockAlert
+from backtest import run_backtest_single, run_backtest_portfolio, get_sp500_tickers
 
 
 # Page configuration
@@ -21,7 +25,7 @@ st.set_page_config(
 st.title("📈 テクニカル分析ダッシュボード")
 
 # Tab navigation
-tab1, tab2 = st.tabs(["📊 テクニカル分析", "🔔 アラート設定"])
+tab1, tab2, tab3 = st.tabs(["📊 テクニカル分析", "🔔 アラート設定", "📈 バックテスト"])
 
 
 # =============================================================================
@@ -345,6 +349,176 @@ with tab2:
 
         ⚠️ Streamlit Cloudでは通知テストはローカル環境でのみ実行できます。
         """)
+
+
+# =============================================================================
+# Tab 3: Backtest
+# =============================================================================
+with tab3:
+    st.header("📈 ゴールデンクロス戦略 バックテスト")
+    st.caption("移動平均線クロスオーバー戦略の過去検証")
+
+    # Sidebar settings for backtest
+    with st.sidebar:
+        st.header("バックテスト設定")
+
+        test_mode = st.radio(
+            "テストモード",
+            options=["single", "portfolio"],
+            format_func=lambda x: "単一銘柄" if x == "single" else "複数銘柄（S&P 500）",
+            key="backtest_mode"
+        )
+
+        if test_mode == "portfolio":
+            sample_size = st.slider("サンプル銘柄数", min_value=10, max_value=100, value=50, step=10, key="sample_size")
+
+        st.subheader("戦略パラメータ")
+        short_ma = st.number_input("短期移動平均（日）", min_value=5, max_value=50, value=25, key="short_ma")
+        long_ma = st.number_input("長期移動平均（日）", min_value=20, max_value=200, value=75, key="long_ma")
+
+        test_period = st.selectbox(
+            "テスト期間",
+            options=["1y", "2y", "3y", "5y"],
+            index=3,
+            format_func=lambda x: {"1y": "1年", "2y": "2年", "3y": "3年", "5y": "5年"}.get(x, x),
+            key="test_period"
+        )
+
+        run_backtest_btn = st.button("バックテスト実行", type="primary", use_container_width=True, key="run_backtest")
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def cached_backtest_portfolio(tickers_tuple, period, max_stocks):
+        tickers = list(tickers_tuple)
+        return run_backtest_portfolio(tickers, period, max_stocks)
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def cached_backtest_single(ticker, period):
+        return run_backtest_single(ticker, period)
+
+    if run_backtest_btn:
+        if test_mode == "single":
+            bt_ticker = st.session_state.get("ticker", "NVDA")
+            if not bt_ticker:
+                bt_ticker = "NVDA"
+
+            with st.spinner(f"{bt_ticker} のバックテストを実行中..."):
+                result = cached_backtest_single(bt_ticker, test_period)
+
+            if result is None:
+                st.error("バックテストに失敗しました")
+            else:
+                st.subheader(f"{bt_ticker} バックテスト結果")
+
+                # Metrics
+                col1, col2, col3, col4, col5 = st.columns(5)
+                with col1:
+                    st.metric("総取引数", result.total_trades)
+                with col2:
+                    st.metric("勝率", f"{result.win_rate:.1f}%")
+                with col3:
+                    st.metric("平均リターン", f"{result.avg_return:.2f}%")
+                with col4:
+                    st.metric("累積リターン", f"{result.total_return:.1f}%")
+                with col5:
+                    st.metric("最大ドローダウン", f"{result.max_drawdown:.1f}%")
+
+                # Trade history
+                st.subheader("取引履歴")
+                trade_data = []
+                for t in result.trades:
+                    trade_data.append({
+                        "エントリー日": t.entry_date.strftime("%Y-%m-%d") if t.entry_date else "",
+                        "エントリー価格": f"${t.entry_price:.2f}",
+                        "決済日": t.exit_date.strftime("%Y-%m-%d") if t.exit_date else "",
+                        "決済価格": f"${t.exit_price:.2f}" if t.exit_price else "",
+                        "リターン": f"{t.return_pct:.2f}%" if t.return_pct else "",
+                        "結果": "✅ 勝ち" if t.is_winner else "❌ 負け"
+                    })
+                st.dataframe(pd.DataFrame(trade_data), use_container_width=True, hide_index=True)
+
+        else:  # Portfolio mode
+            with st.spinner(f"S&P 500（{sample_size}銘柄）のバックテストを実行中..."):
+                tickers = get_sp500_tickers()
+                results = cached_backtest_portfolio(tuple(tickers), test_period, sample_size)
+
+            if "error" in results:
+                st.error(f"エラー: {results['error']}")
+            else:
+                summary = results["summary"]
+
+                st.subheader("S&P 500 バックテスト結果")
+
+                # Summary metrics
+                col1, col2, col3, col4, col5, col6 = st.columns(6)
+                with col1:
+                    st.metric("検証銘柄数", summary["stocks_analyzed"])
+                with col2:
+                    st.metric("総トレード数", summary["total_trades"])
+                with col3:
+                    st.metric("全体勝率", f"{summary['overall_win_rate']:.1f}%")
+                with col4:
+                    st.metric("平均リターン/トレード", f"{summary['avg_return_per_trade']:.2f}%")
+                with col5:
+                    st.metric("中央値リターン", f"{summary['median_return']:.2f}%")
+                with col6:
+                    st.metric("最悪ドローダウン", f"{summary['avg_max_drawdown']:.2f}%")
+
+                st.divider()
+
+                # Performance tables
+                st.subheader("銘柄別パフォーマンス")
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("**トップ10（累積リターン）**")
+                    top_df = pd.DataFrame(results["best_performers"])
+                    top_df.columns = ["ticker", "total_return", "win_rate", "total_trades"]
+                    top_df["total_return"] = top_df["total_return"].apply(lambda x: f"{x:.1f}%")
+                    top_df["win_rate"] = top_df["win_rate"].apply(lambda x: f"{x:.0f}%")
+                    st.dataframe(top_df, use_container_width=True, hide_index=True)
+
+                with col2:
+                    st.markdown("**ワースト10（累積リターン）**")
+                    worst_df = pd.DataFrame(results["worst_performers"])
+                    worst_df.columns = ["ticker", "total_return", "win_rate", "total_trades"]
+                    worst_df["total_return"] = worst_df["total_return"].apply(lambda x: f"{x:.1f}%")
+                    worst_df["win_rate"] = worst_df["win_rate"].apply(lambda x: f"{x:.0f}%")
+                    st.dataframe(worst_df, use_container_width=True, hide_index=True)
+
+                st.divider()
+
+                # Distribution charts
+                st.subheader("リターン分布")
+                col1, col2 = st.columns(2)
+
+                all_returns = [r.total_return for r in results["all_results"]]
+                all_win_rates = [r.win_rate for r in results["all_results"]]
+
+                with col1:
+                    st.markdown("**累積リターン分布**")
+                    fig1 = px.histogram(
+                        x=all_returns,
+                        nbins=20,
+                        labels={"x": "累積リターン (%)"},
+                        color_discrete_sequence=["#2196f3"]
+                    )
+                    fig1.add_vline(x=np.mean(all_returns), line_dash="dash", line_color="red",
+                                   annotation_text=f"平均: {np.mean(all_returns):.1f}%")
+                    fig1.update_layout(showlegend=False, height=300)
+                    st.plotly_chart(fig1, use_container_width=True)
+
+                with col2:
+                    st.markdown("**勝率分布**")
+                    fig2 = px.histogram(
+                        x=all_win_rates,
+                        nbins=20,
+                        labels={"x": "勝率 (%)"},
+                        color_discrete_sequence=["#4caf50"]
+                    )
+                    fig2.add_vline(x=np.mean(all_win_rates), line_dash="dash", line_color="red",
+                                   annotation_text=f"平均: {np.mean(all_win_rates):.1f}%")
+                    fig2.update_layout(showlegend=False, height=300)
+                    st.plotly_chart(fig2, use_container_width=True)
 
 
 # Footer
