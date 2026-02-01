@@ -44,8 +44,23 @@ with st.sidebar:
     )
 
     st.subheader("表示設定")
-    show_ma = st.checkbox("移動平均線", value=True)
+
+    # 移動平均線の個別設定
+    with st.expander("移動平均線", expanded=True):
+        show_ma5 = st.checkbox("MA5 (5日)", value=True)
+        show_ma25 = st.checkbox("MA25 (25日)", value=True)
+        show_ma75 = st.checkbox("MA75 (75日)", value=True)
+        show_ma200 = st.checkbox("MA200 (200日)", value=True)
+
     show_bb = st.checkbox("ボリンジャーバンド", value=True)
+
+    # 移動平均線の設定を辞書にまとめる
+    ma_settings = {
+        "SMA_5": show_ma5,
+        "SMA_25": show_ma25,
+        "SMA_75": show_ma75,
+        "SMA_200": show_ma200,
+    }
 
     analyze_btn = st.button("分析開始", type="primary", use_container_width=True)
 
@@ -167,7 +182,7 @@ if analyze_btn or ticker:
 
             # Chart
             st.subheader("📉 チャート")
-            fig = create_candlestick_chart(df, ticker, show_ma, show_bb)
+            fig = create_candlestick_chart(df, ticker, ma_settings, show_bb)
             st.plotly_chart(fig, use_container_width=True)
 
             st.divider()

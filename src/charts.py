@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 def create_candlestick_chart(
     df: pd.DataFrame,
     ticker: str,
-    show_ma: bool = True,
+    ma_settings: dict[str, bool] | bool = True,
     show_bb: bool = True,
 ) -> go.Figure:
     """Create candlestick chart with indicators.
@@ -16,12 +16,20 @@ def create_candlestick_chart(
     Args:
         df: DataFrame with OHLCV and indicators
         ticker: Stock ticker symbol
-        show_ma: Show moving averages
+        ma_settings: Dict of MA column names to show/hide, or bool to show/hide all
         show_bb: Show Bollinger Bands
 
     Returns:
         Plotly figure
     """
+    # 後方互換性: boolが渡された場合は全てのMAに適用
+    if isinstance(ma_settings, bool):
+        ma_settings = {
+            "SMA_5": ma_settings,
+            "SMA_25": ma_settings,
+            "SMA_75": ma_settings,
+            "SMA_200": ma_settings,
+        }
     fig = make_subplots(
         rows=4,
         cols=1,
@@ -53,26 +61,25 @@ def create_candlestick_chart(
     )
 
     # Moving Averages
-    if show_ma:
-        ma_configs = [
-            ("SMA_5", "#ff9800", "MA5"),
-            ("SMA_25", "#2196f3", "MA25"),
-            ("SMA_75", "#9c27b0", "MA75"),
-            ("SMA_200", "#f44336", "MA200"),
-        ]
-        for col, color, name in ma_configs:
-            if col in df.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=df.index,
-                        y=df[col],
-                        mode="lines",
-                        name=name,
-                        line=dict(color=color, width=1),
-                    ),
-                    row=1,
-                    col=1,
-                )
+    ma_configs = [
+        ("SMA_5", "#ff9800", "MA5"),
+        ("SMA_25", "#2196f3", "MA25"),
+        ("SMA_75", "#9c27b0", "MA75"),
+        ("SMA_200", "#f44336", "MA200"),
+    ]
+    for col, color, name in ma_configs:
+        if col in df.columns and ma_settings.get(col, False):
+            fig.add_trace(
+                go.Scatter(
+                    x=df.index,
+                    y=df[col],
+                    mode="lines",
+                    name=name,
+                    line=dict(color=color, width=1),
+                ),
+                row=1,
+                col=1,
+            )
 
     # Bollinger Bands
     if show_bb and "BB_Upper" in df.columns:
