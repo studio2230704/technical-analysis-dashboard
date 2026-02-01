@@ -3,10 +3,10 @@
 import streamlit as st
 import pandas as pd
 
-from src.data import fetch_stock_data, get_stock_info, get_current_price
-from src.indicators import add_all_indicators
-from src.signals import detect_all_signals, Signal
-from src.charts import create_candlestick_chart
+from data import fetch_stock_data, get_stock_info, get_current_price
+from indicators import add_all_indicators
+from signals import detect_all_signals, Signal
+from charts import create_candlestick_chart
 
 
 # Page configuration
