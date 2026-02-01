@@ -14,15 +14,21 @@ from charts import create_candlestick_chart
 from watchlist_manager import WatchlistManager, StockAlert
 from backtest import run_backtest_single, run_backtest_portfolio, get_sp500_tickers
 
+# Fundamental analysis imports
+from fundamental.parser import FinancialParser
+from fundamental.metrics import calculate_growth_metrics, calculate_all_cagrs
+from fundamental.transformer import financials_to_dataframe, growth_metrics_to_dataframe, format_currency, format_percentage
+from fundamental.charts import create_financials_chart, create_growth_chart, create_margin_chart
+
 
 # Page configuration
 st.set_page_config(
-    page_title="テクニカル分析ダッシュボード",
+    page_title="株式分析ダッシュボード",
     page_icon="📈",
     layout="wide",
 )
 
-st.title("📈 テクニカル分析ダッシュボード")
+st.title("📈 株式分析ダッシュボード")
 
 # =============================================================================
 # Sidebar: Navigation & Common Settings
@@ -32,10 +38,11 @@ with st.sidebar:
     st.header("ページ切り替え")
     page = st.radio(
         "表示画面",
-        options=["analysis", "alerts", "backtest"],
+        options=["technical", "fundamental", "alerts", "backtest"],
         format_func=lambda x: {
-            "analysis": "📊 テクニカル分析",
-            "alerts": "🔔 アラート設定",
+            "technical": "📊 テクニカル",
+            "fundamental": "📋 ファンダメンタル",
+            "alerts": "🔔 アラート",
             "backtest": "📈 バックテスト",
         }.get(x, x),
         horizontal=True,
@@ -49,8 +56,8 @@ with st.sidebar:
     ticker = st.text_input(
         "ティッカーシンボル",
         value="NVDA",
-        placeholder="例: AAPL, NVDA, 7203.T",
-        help="米国株はそのまま、日本株は.Tを付ける（例: 7203.T）",
+        placeholder="例: AAPL, NVDA, MSFT",
+        help="米国株のティッカーシンボルを入力（ファンダメンタル分析は米国株のみ対応）",
     ).upper().strip()
 
     # Store ticker in session state for cross-page access
@@ -69,6 +76,17 @@ def load_data(ticker: str, period: str):
         return df, info, None
     except Exception as e:
         return None, None, str(e)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_fundamental_data(ticker: str, years: int = 5):
+    """Load fundamental data from SEC EDGAR."""
+    try:
+        parser = FinancialParser()
+        financials = parser.get_company_financials(ticker, years)
+        return financials, None
+    except Exception as e:
+        return None, str(e)
 
 
 def display_signals(signals: list[Signal]):
@@ -119,7 +137,7 @@ def display_current_indicators(df: pd.DataFrame):
 # =============================================================================
 # Page: Technical Analysis
 # =============================================================================
-if page == "analysis":
+if page == "technical":
     # Additional sidebar settings for analysis
     with st.sidebar:
         st.divider()
@@ -240,6 +258,158 @@ if page == "analysis":
                         df[available_cols].tail(30).sort_index(ascending=False),
                         use_container_width=True,
                     )
+
+
+# =============================================================================
+# Page: Fundamental Analysis
+# =============================================================================
+elif page == "fundamental":
+    st.header("📋 ファンダメンタル分析")
+    st.caption("SEC EDGAR 10-K年次報告書からの財務データ分析")
+
+    # Sidebar settings
+    with st.sidebar:
+        st.divider()
+        st.header("分析設定")
+
+        years = st.slider(
+            "取得年数",
+            min_value=3,
+            max_value=10,
+            value=5,
+            help="過去何年分の10-K報告書を取得するか",
+        )
+
+        fetch_btn = st.button("データ取得", type="primary", use_container_width=True)
+
+    # Main content
+    if not ticker:
+        st.warning("サイドバーでティッカーシンボルを入力してください")
+    elif fetch_btn or ("fundamental_data" in st.session_state and st.session_state.get("fundamental_ticker") == ticker):
+        with st.spinner(f"{ticker} の10-K報告書を取得中... (初回は時間がかかります)"):
+            financials, error = load_fundamental_data(ticker, years)
+
+        if error:
+            st.error(f"エラー: {error}")
+            st.info("💡 ヒント: 米国上場企業のティッカーシンボルを入力してください（例: AAPL, MSFT, GOOGL）")
+        elif financials is None or not financials.financials:
+            st.error(f"{ticker} の財務データが見つかりません")
+        else:
+            # Store in session state for persistence
+            st.session_state["fundamental_data"] = financials
+            st.session_state["fundamental_ticker"] = ticker
+
+            st.header(f"{financials.company_name} ({financials.ticker})")
+
+            # Convert to DataFrames
+            fin_df = financials_to_dataframe(financials)
+            growth_metrics = calculate_growth_metrics(financials)
+            growth_df = growth_metrics_to_dataframe(growth_metrics)
+            cagrs = calculate_all_cagrs(financials)
+
+            # CAGR Summary
+            st.subheader("📈 年平均成長率 (CAGR)")
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                cagr_val = cagrs.get("revenue_cagr")
+                st.metric(
+                    "売上高 CAGR",
+                    format_percentage(cagr_val),
+                    delta_color="normal" if cagr_val and cagr_val > 0 else "inverse",
+                )
+
+            with col2:
+                cagr_val = cagrs.get("operating_income_cagr")
+                st.metric(
+                    "営業利益 CAGR",
+                    format_percentage(cagr_val),
+                    delta_color="normal" if cagr_val and cagr_val > 0 else "inverse",
+                )
+
+            with col3:
+                cagr_val = cagrs.get("net_income_cagr")
+                st.metric(
+                    "純利益 CAGR",
+                    format_percentage(cagr_val),
+                    delta_color="normal" if cagr_val and cagr_val > 0 else "inverse",
+                )
+
+            with col4:
+                cagr_val = cagrs.get("operating_cash_flow_cagr")
+                st.metric(
+                    "営業CF CAGR",
+                    format_percentage(cagr_val),
+                    delta_color="normal" if cagr_val and cagr_val > 0 else "inverse",
+                )
+
+            st.divider()
+
+            # Financial Charts
+            st.subheader("💹 財務指標推移")
+            fig_financials = create_financials_chart(fin_df)
+            st.plotly_chart(fig_financials, use_container_width=True)
+
+            st.divider()
+
+            # Growth Chart
+            if not growth_df.empty:
+                st.subheader("📊 前年比成長率")
+                fig_growth = create_growth_chart(growth_df)
+                st.plotly_chart(fig_growth, use_container_width=True)
+
+                st.divider()
+
+            # Margin Chart
+            st.subheader("📉 利益率推移")
+            fig_margin = create_margin_chart(fin_df)
+            st.plotly_chart(fig_margin, use_container_width=True)
+
+            st.divider()
+
+            # Data Tables
+            with st.expander("📋 財務データ詳細"):
+                # Format the dataframe for display
+                display_df = fin_df.copy()
+                for col in ["Revenue", "Operating Income", "Net Income", "Operating Cash Flow"]:
+                    if col in display_df.columns:
+                        display_df[col] = display_df[col].apply(lambda x: format_currency(x) if pd.notna(x) else "N/A")
+                for col in ["Operating Margin (%)", "Net Margin (%)"]:
+                    if col in display_df.columns:
+                        display_df[col] = display_df[col].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+            if not growth_df.empty:
+                with st.expander("📊 成長率データ詳細"):
+                    display_growth_df = growth_df.copy()
+                    for col in growth_df.columns:
+                        if "Growth" in col:
+                            display_growth_df[col] = display_growth_df[col].apply(
+                                lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A"
+                            )
+                    st.dataframe(display_growth_df, use_container_width=True, hide_index=True)
+
+    else:
+        st.info("👆 サイドバーの「データ取得」ボタンをクリックして財務データを取得してください")
+
+        st.markdown("""
+        ### このページでできること
+
+        SEC EDGAR（米国証券取引委員会）から10-K年次報告書を取得し、以下の財務指標を分析します：
+
+        - **売上高** (Revenue)
+        - **営業利益** (Operating Income)
+        - **純利益** (Net Income)
+        - **営業キャッシュフロー** (Operating Cash Flow)
+
+        また、以下の分析指標も自動計算されます：
+        - 前年比成長率 (YoY Growth)
+        - 年平均成長率 (CAGR)
+        - 営業利益率・純利益率
+
+        ⚠️ **注意**: 米国上場企業のみ対応しています。
+        """)
 
 
 # =============================================================================
@@ -558,6 +728,6 @@ elif page == "backtest":
 # Footer
 st.divider()
 st.caption(
-    "データソース: Yahoo Finance | "
+    "データソース: Yahoo Finance, SEC EDGAR | "
     "免責事項: 本ツールは情報提供を目的としており、投資助言ではありません。"
 )
