@@ -95,3 +95,58 @@ def format_dead_cross_alert(ticker: str, price: float, date: str) -> str:
 
 短期移動平均線が長期移動平均線を下抜けました。
 売りシグナルの可能性があります。"""
+
+
+def format_alert_with_order_info(
+    alert_message: str,
+    ticker: str,
+    name: str,
+    current_price: float,
+    entry_price: float,
+    position_shares: int,
+    position_value: float,
+    stop_loss_price: float,
+    stop_loss_percent: float,
+    take_profit_price: float,
+    take_profit_percent: float,
+    risk_amount: float,
+    reward_amount: float,
+    risk_reward_ratio: float,
+) -> str:
+    """アラートメッセージに発注情報を追加する。
+
+    Args:
+        alert_message: 元のアラートメッセージ
+        その他: OrderInfo の各フィールド
+
+    Returns:
+        発注情報付きのアラートメッセージ
+    """
+    order_section = f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 発注情報
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【銘柄】
+  {name} ({ticker})
+
+【価格】
+  現在価格: ${current_price:,.2f}
+  推奨エントリー: ${entry_price:,.2f}
+
+【ポジションサイズ】
+  株数: {position_shares:,} 株
+  金額: ${position_value:,.2f}
+
+【リスク管理】
+  ストップロス: ${stop_loss_price:,.2f} (-{stop_loss_percent:.1f}%)
+  利益確定目標: ${take_profit_price:,.2f} (+{take_profit_percent:.1f}%)
+
+【リスクリワード】
+  リスク額: ${risk_amount:,.2f}
+  期待利益: ${reward_amount:,.2f}
+  比率: 1:{risk_reward_ratio:.1f}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+
+    return alert_message + "\n" + order_section

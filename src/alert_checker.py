@@ -13,8 +13,10 @@ from notifier import (
     format_golden_cross_alert,
     format_rsi_alert,
     format_dead_cross_alert,
+    format_alert_with_order_info,
     send_notification,
 )
+from order_info import calculate_order_info, OrderInfo
 from watchlist_manager import WatchlistManager, StockAlert
 
 
@@ -26,6 +28,7 @@ class Alert:
     alert_type: str
     message: str
     timestamp: datetime
+    order_info: OrderInfo | None = None
 
 
 def check_golden_cross(df: pd.DataFrame, ticker: str) -> Alert | None:
@@ -245,10 +248,70 @@ def run_alert_check(watchlist_path: str | Path) -> list[Alert]:
     return all_alerts
 
 
-def send_alerts(alerts: list[Alert]) -> None:
-    """Send all alerts via configured notification channels."""
+def enrich_alert_with_order_info(
+    alert: Alert,
+    total_assets: float = 100000,
+) -> Alert:
+    """アラートに発注情報を追加する。
+
+    Args:
+        alert: 元のアラート
+        total_assets: 総資産額（USD）
+
+    Returns:
+        発注情報付きのアラート
+    """
+    try:
+        order = calculate_order_info(alert.ticker, total_assets)
+
+        enriched_message = format_alert_with_order_info(
+            alert_message=alert.message,
+            ticker=order.ticker,
+            name=order.name,
+            current_price=order.current_price,
+            entry_price=order.entry_price,
+            position_shares=order.position_size_shares,
+            position_value=order.position_size_value,
+            stop_loss_price=order.stop_loss_price,
+            stop_loss_percent=order.stop_loss_percent,
+            take_profit_price=order.take_profit_price,
+            take_profit_percent=order.take_profit_percent,
+            risk_amount=order.risk_amount,
+            reward_amount=order.reward_amount,
+            risk_reward_ratio=order.risk_reward_ratio,
+        )
+
+        return Alert(
+            ticker=alert.ticker,
+            alert_type=alert.alert_type,
+            message=enriched_message,
+            timestamp=alert.timestamp,
+            order_info=order,
+        )
+    except Exception as e:
+        print(f"  Warning: Could not calculate order info for {alert.ticker}: {e}")
+        return alert
+
+
+def send_alerts(
+    alerts: list[Alert],
+    include_order_info: bool = True,
+    total_assets: float = 100000,
+) -> None:
+    """Send all alerts via configured notification channels.
+
+    Args:
+        alerts: 送信するアラートのリスト
+        include_order_info: 発注情報を含めるか
+        total_assets: 総資産額（USD、発注情報計算用）
+    """
     for alert in alerts:
         print(f"Sending alert: {alert.alert_type} for {alert.ticker}")
+
+        # 発注情報を追加
+        if include_order_info:
+            alert = enrich_alert_with_order_info(alert, total_assets)
+
         result = send_notification(alert.message)
 
         if result.success:
@@ -258,20 +321,43 @@ def send_alerts(alerts: list[Alert]) -> None:
 
 
 if __name__ == "__main__":
-    import sys
+    import argparse
 
-    # Default to watchlist.json in parent directory
-    default_path = Path(__file__).parent.parent / "watchlist.json"
-    watchlist_path = sys.argv[1] if len(sys.argv) > 1 else default_path
+    parser = argparse.ArgumentParser(description="Run stock alert checks")
+    parser.add_argument(
+        "watchlist",
+        nargs="?",
+        default=str(Path(__file__).parent.parent / "watchlist.json"),
+        help="Path to watchlist file",
+    )
+    parser.add_argument(
+        "--total-assets",
+        type=float,
+        default=100000,
+        help="Total portfolio assets in USD (default: 100000)",
+    )
+    parser.add_argument(
+        "--no-order-info",
+        action="store_true",
+        help="Disable order information in alerts",
+    )
 
-    print(f"Running alert check with watchlist: {watchlist_path}")
-    alerts = run_alert_check(watchlist_path)
+    args = parser.parse_args()
+
+    print(f"Running alert check with watchlist: {args.watchlist}")
+    print(f"Total assets for position sizing: ${args.total_assets:,.2f}")
+
+    alerts = run_alert_check(args.watchlist)
 
     if alerts:
         print(f"\n{len(alerts)} alert(s) triggered:")
         for alert in alerts:
             print(f"  - {alert.ticker}: {alert.alert_type}")
 
-        send_alerts(alerts)
+        send_alerts(
+            alerts,
+            include_order_info=not args.no_order_info,
+            total_assets=args.total_assets,
+        )
     else:
         print("\nNo alerts triggered.")

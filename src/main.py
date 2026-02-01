@@ -24,24 +24,106 @@ st.set_page_config(
 
 st.title("📈 テクニカル分析ダッシュボード")
 
-# Tab navigation
-tab1, tab2, tab3 = st.tabs(["📊 テクニカル分析", "🔔 アラート設定", "📈 バックテスト"])
+# =============================================================================
+# Sidebar: Navigation & Common Settings
+# =============================================================================
+with st.sidebar:
+    # Page navigation at the top
+    st.header("ページ切り替え")
+    page = st.radio(
+        "表示画面",
+        options=["analysis", "alerts", "backtest"],
+        format_func=lambda x: {
+            "analysis": "📊 テクニカル分析",
+            "alerts": "🔔 アラート設定",
+            "backtest": "📈 バックテスト",
+        }.get(x, x),
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    st.divider()
+
+    # Common ticker input (used across all pages)
+    st.header("銘柄設定")
+    ticker = st.text_input(
+        "ティッカーシンボル",
+        value="NVDA",
+        placeholder="例: AAPL, NVDA, 7203.T",
+        help="米国株はそのまま、日本株は.Tを付ける（例: 7203.T）",
+    ).upper().strip()
+
+    # Store ticker in session state for cross-page access
+    st.session_state["ticker"] = ticker
 
 
 # =============================================================================
-# Tab 1: Technical Analysis
+# Helper Functions
 # =============================================================================
-with tab1:
-    # Sidebar for Technical Analysis
+@st.cache_data(ttl=300)
+def load_data(ticker: str, period: str):
+    try:
+        df = fetch_stock_data(ticker, period)
+        df = add_all_indicators(df)
+        info = get_stock_info(ticker)
+        return df, info, None
+    except Exception as e:
+        return None, None, str(e)
+
+
+def display_signals(signals: list[Signal]):
+    if not signals:
+        st.info("直近30日間にシグナルはありません")
+        return
+    for signal in signals[:10]:
+        icon = "🟢" if signal.is_bullish else "🔴"
+        st.markdown(f"{icon} **{signal.date}** - {signal.description} (${signal.price:.2f})")
+
+
+def display_current_indicators(df: pd.DataFrame):
+    if df.empty:
+        return
+    latest = df.iloc[-1]
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        rsi_val = latest.get("RSI")
+        if pd.notna(rsi_val):
+            rsi_status = "売られすぎ" if rsi_val < 30 else "買われすぎ" if rsi_val > 70 else "中立"
+            st.metric("RSI", f"{rsi_val:.1f}", rsi_status)
+
+    with col2:
+        macd_val = latest.get("MACD")
+        signal_val = latest.get("MACD_Signal")
+        if pd.notna(macd_val) and pd.notna(signal_val):
+            diff = macd_val - signal_val
+            status = "買い" if diff > 0 else "売り"
+            st.metric("MACD", f"{macd_val:.2f}", status)
+
+    with col3:
+        bb_upper = latest.get("BB_Upper")
+        bb_lower = latest.get("BB_Lower")
+        close = latest.get("Close")
+        if pd.notna(bb_upper) and pd.notna(bb_lower) and pd.notna(close):
+            bb_pos = (close - bb_lower) / (bb_upper - bb_lower) * 100
+            st.metric("BB位置", f"{bb_pos:.0f}%", "上限付近" if bb_pos > 80 else "下限付近" if bb_pos < 20 else "中間")
+
+    with col4:
+        sma_25 = latest.get("SMA_25")
+        sma_75 = latest.get("SMA_75")
+        if pd.notna(sma_25) and pd.notna(sma_75):
+            trend = "上昇トレンド" if sma_25 > sma_75 else "下降トレンド"
+            st.metric("トレンド", trend)
+
+
+# =============================================================================
+# Page: Technical Analysis
+# =============================================================================
+if page == "analysis":
+    # Additional sidebar settings for analysis
     with st.sidebar:
+        st.divider()
         st.header("分析設定")
-
-        ticker = st.text_input(
-            "ティッカーシンボル",
-            value="NVDA",
-            placeholder="例: AAPL, NVDA, 7203.T",
-            help="米国株はそのまま、日本株は.Tを付ける（例: 7203.T）",
-        ).upper().strip()
 
         period = st.selectbox(
             "期間",
@@ -75,59 +157,6 @@ with tab1:
         }
 
         analyze_btn = st.button("分析開始", type="primary", use_container_width=True)
-
-    @st.cache_data(ttl=300)
-    def load_data(ticker: str, period: str):
-        try:
-            df = fetch_stock_data(ticker, period)
-            df = add_all_indicators(df)
-            info = get_stock_info(ticker)
-            return df, info, None
-        except Exception as e:
-            return None, None, str(e)
-
-    def display_signals(signals: list[Signal]):
-        if not signals:
-            st.info("直近30日間にシグナルはありません")
-            return
-        for signal in signals[:10]:
-            icon = "🟢" if signal.is_bullish else "🔴"
-            st.markdown(f"{icon} **{signal.date}** - {signal.description} (${signal.price:.2f})")
-
-    def display_current_indicators(df: pd.DataFrame):
-        if df.empty:
-            return
-        latest = df.iloc[-1]
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            rsi_val = latest.get("RSI")
-            if pd.notna(rsi_val):
-                rsi_status = "売られすぎ" if rsi_val < 30 else "買われすぎ" if rsi_val > 70 else "中立"
-                st.metric("RSI", f"{rsi_val:.1f}", rsi_status)
-
-        with col2:
-            macd_val = latest.get("MACD")
-            signal_val = latest.get("MACD_Signal")
-            if pd.notna(macd_val) and pd.notna(signal_val):
-                diff = macd_val - signal_val
-                status = "買い" if diff > 0 else "売り"
-                st.metric("MACD", f"{macd_val:.2f}", status)
-
-        with col3:
-            bb_upper = latest.get("BB_Upper")
-            bb_lower = latest.get("BB_Lower")
-            close = latest.get("Close")
-            if pd.notna(bb_upper) and pd.notna(bb_lower) and pd.notna(close):
-                bb_pos = (close - bb_lower) / (bb_upper - bb_lower) * 100
-                st.metric("BB位置", f"{bb_pos:.0f}%", "上限付近" if bb_pos > 80 else "下限付近" if bb_pos < 20 else "中間")
-
-        with col4:
-            sma_25 = latest.get("SMA_25")
-            sma_75 = latest.get("SMA_75")
-            if pd.notna(sma_25) and pd.notna(sma_75):
-                trend = "上昇トレンド" if sma_25 > sma_75 else "下降トレンド"
-                st.metric("トレンド", trend)
 
     # Main content
     if analyze_btn or ticker:
@@ -214,9 +243,9 @@ with tab1:
 
 
 # =============================================================================
-# Tab 2: Alert Settings
+# Page: Alert Settings
 # =============================================================================
-with tab2:
+elif page == "alerts":
     st.header("🔔 アラート設定")
     st.caption("監視銘柄の管理とアラート条件の設定")
 
@@ -352,14 +381,15 @@ with tab2:
 
 
 # =============================================================================
-# Tab 3: Backtest
+# Page: Backtest
 # =============================================================================
-with tab3:
+elif page == "backtest":
     st.header("📈 ゴールデンクロス戦略 バックテスト")
     st.caption("移動平均線クロスオーバー戦略の過去検証")
 
     # Sidebar settings for backtest
     with st.sidebar:
+        st.divider()
         st.header("バックテスト設定")
 
         test_mode = st.radio(
@@ -368,6 +398,9 @@ with tab3:
             format_func=lambda x: "単一銘柄" if x == "single" else "複数銘柄（S&P 500）",
             key="backtest_mode"
         )
+
+        if test_mode == "single":
+            st.info(f"🎯 対象銘柄: **{ticker}**")
 
         if test_mode == "portfolio":
             sample_size = st.slider("サンプル銘柄数", min_value=10, max_value=100, value=50, step=10, key="sample_size")
@@ -397,44 +430,45 @@ with tab3:
 
     if run_backtest_btn:
         if test_mode == "single":
-            bt_ticker = st.session_state.get("ticker", "NVDA")
+            # Use the ticker from sidebar
+            bt_ticker = ticker
             if not bt_ticker:
-                bt_ticker = "NVDA"
-
-            with st.spinner(f"{bt_ticker} のバックテストを実行中..."):
-                result = cached_backtest_single(bt_ticker, test_period)
-
-            if result is None:
-                st.error("バックテストに失敗しました")
+                st.warning("サイドバーでティッカーシンボルを入力してください")
             else:
-                st.subheader(f"{bt_ticker} バックテスト結果")
+                with st.spinner(f"{bt_ticker} のバックテストを実行中..."):
+                    result = cached_backtest_single(bt_ticker, test_period)
 
-                # Metrics
-                col1, col2, col3, col4, col5 = st.columns(5)
-                with col1:
-                    st.metric("総取引数", result.total_trades)
-                with col2:
-                    st.metric("勝率", f"{result.win_rate:.1f}%")
-                with col3:
-                    st.metric("平均リターン", f"{result.avg_return:.2f}%")
-                with col4:
-                    st.metric("累積リターン", f"{result.total_return:.1f}%")
-                with col5:
-                    st.metric("最大ドローダウン", f"{result.max_drawdown:.1f}%")
+                if result is None:
+                    st.error("バックテストに失敗しました")
+                else:
+                    st.subheader(f"{bt_ticker} バックテスト結果")
 
-                # Trade history
-                st.subheader("取引履歴")
-                trade_data = []
-                for t in result.trades:
-                    trade_data.append({
-                        "エントリー日": t.entry_date.strftime("%Y-%m-%d") if t.entry_date else "",
-                        "エントリー価格": f"${t.entry_price:.2f}",
-                        "決済日": t.exit_date.strftime("%Y-%m-%d") if t.exit_date else "",
-                        "決済価格": f"${t.exit_price:.2f}" if t.exit_price else "",
-                        "リターン": f"{t.return_pct:.2f}%" if t.return_pct else "",
-                        "結果": "✅ 勝ち" if t.is_winner else "❌ 負け"
-                    })
-                st.dataframe(pd.DataFrame(trade_data), use_container_width=True, hide_index=True)
+                    # Metrics
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        st.metric("総取引数", result.total_trades)
+                    with col2:
+                        st.metric("勝率", f"{result.win_rate:.1f}%")
+                    with col3:
+                        st.metric("平均リターン", f"{result.avg_return:.2f}%")
+                    with col4:
+                        st.metric("累積リターン", f"{result.total_return:.1f}%")
+                    with col5:
+                        st.metric("最大ドローダウン", f"{result.max_drawdown:.1f}%")
+
+                    # Trade history
+                    st.subheader("取引履歴")
+                    trade_data = []
+                    for t in result.trades:
+                        trade_data.append({
+                            "エントリー日": t.entry_date.strftime("%Y-%m-%d") if t.entry_date else "",
+                            "エントリー価格": f"${t.entry_price:.2f}",
+                            "決済日": t.exit_date.strftime("%Y-%m-%d") if t.exit_date else "",
+                            "決済価格": f"${t.exit_price:.2f}" if t.exit_price else "",
+                            "リターン": f"{t.return_pct:.2f}%" if t.return_pct else "",
+                            "結果": "✅ 勝ち" if t.is_winner else "❌ 負け"
+                        })
+                    st.dataframe(pd.DataFrame(trade_data), use_container_width=True, hide_index=True)
 
         else:  # Portfolio mode
             with st.spinner(f"S&P 500（{sample_size}銘柄）のバックテストを実行中..."):
