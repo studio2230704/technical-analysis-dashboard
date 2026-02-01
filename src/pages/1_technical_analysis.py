@@ -1,4 +1,10 @@
-"""Technical Analysis Dashboard - Main Entry Point."""
+"""Technical Analysis Page for Streamlit."""
+
+import sys
+from pathlib import Path
+
+# Add src to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 import pandas as pd
@@ -11,12 +17,12 @@ from charts import create_candlestick_chart
 
 # Page configuration
 st.set_page_config(
-    page_title="テクニカル分析ダッシュボード",
+    page_title="テクニカル分析",
     page_icon="📈",
     layout="wide",
 )
 
-st.title("📈 テクニカル分析ダッシュボード")
+st.title("📈 テクニカル分析")
 
 # Sidebar
 with st.sidebar:
