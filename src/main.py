@@ -20,6 +20,15 @@ from fundamental.metrics import calculate_growth_metrics, calculate_all_cagrs
 from fundamental.transformer import financials_to_dataframe, growth_metrics_to_dataframe, format_currency, format_percentage
 from fundamental.charts import create_financials_chart, create_growth_chart, create_margin_chart
 
+# AI analysis imports
+from ai_analyzer import (
+    analyze_fundamental,
+    analyze_macro,
+    analyze_risk,
+    generate_investment_summary,
+    is_api_key_configured,
+)
+
 
 # Page configuration
 st.set_page_config(
@@ -28,7 +37,14 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("📈 株式分析ダッシュボード")
+# Page titles mapping
+PAGE_TITLES = {
+    "technical": "📊 テクニカル分析",
+    "fundamental": "📋 ファンダメンタル分析",
+    "ai_analysis": "🤖 AI分析",
+    "alerts": "🔔 アラート設定",
+    "backtest": "📈 バックテスト",
+}
 
 # =============================================================================
 # Sidebar: Navigation & Common Settings
@@ -38,16 +54,16 @@ with st.sidebar:
     st.header("ページ切り替え")
     page = st.radio(
         "表示画面",
-        options=["technical", "fundamental", "alerts", "backtest"],
-        format_func=lambda x: {
-            "technical": "📊 テクニカル",
-            "fundamental": "📋 ファンダメンタル",
-            "alerts": "🔔 アラート",
-            "backtest": "📈 バックテスト",
-        }.get(x, x),
+        options=["technical", "fundamental", "ai_analysis", "alerts", "backtest"],
+        format_func=lambda x: PAGE_TITLES.get(x, x),
         horizontal=True,
         label_visibility="collapsed",
     )
+
+# Dynamic page title
+st.title(PAGE_TITLES.get(page, "📈 株式分析ダッシュボード"))
+
+with st.sidebar:
 
     st.divider()
 
@@ -410,6 +426,194 @@ elif page == "fundamental":
 
         ⚠️ **注意**: 米国上場企業のみ対応しています。
         """)
+
+
+# =============================================================================
+# Page: AI Analysis
+# =============================================================================
+elif page == "ai_analysis":
+    st.header("🤖 AI分析")
+    st.caption("Claude APIを使った包括的な投資分析（ファンダメンタル・マクロ・リスク評価）")
+
+    # Check API key
+    if not is_api_key_configured():
+        st.error("⚠️ ANTHROPIC_API_KEY が設定されていません")
+        st.markdown("""
+        ### 設定方法
+
+        **ローカル環境の場合:**
+        `.env` ファイルに以下を追加:
+        ```
+        ANTHROPIC_API_KEY=sk-ant-xxxxx
+        ```
+
+        **Streamlit Cloud の場合:**
+        1. アプリの Settings → Secrets
+        2. 以下を追加:
+        ```toml
+        ANTHROPIC_API_KEY = "sk-ant-xxxxx"
+        ```
+
+        APIキーは [Anthropic Console](https://console.anthropic.com/) から取得できます。
+        """)
+    else:
+        # Sidebar settings
+        with st.sidebar:
+            st.divider()
+            st.header("AI分析設定")
+
+            analysis_types = st.multiselect(
+                "実行する分析",
+                options=["fundamental", "macro", "risk"],
+                default=["fundamental", "macro", "risk"],
+                format_func=lambda x: {
+                    "fundamental": "📊 ファンダメンタル分析",
+                    "macro": "🌍 マクロ環境分析",
+                    "risk": "⚠️ リスク評価",
+                }.get(x, x),
+            )
+
+            generate_summary = st.checkbox("📝 総合サマリーを生成", value=True)
+
+            st.info(f"🎯 対象銘柄: **{ticker}**")
+
+            run_ai_btn = st.button("🚀 AI分析を実行", type="primary", use_container_width=True)
+
+        # Main content
+        if not ticker:
+            st.warning("サイドバーでティッカーシンボルを入力してください")
+        elif run_ai_btn:
+            # Get company info
+            try:
+                info = get_stock_info(ticker)
+                company_name = info.get("name", ticker)
+                sector = info.get("sector", "Technology")
+            except Exception:
+                company_name = ticker
+                sector = "Technology"
+
+            # Get financial data for context
+            financial_context = ""
+            try:
+                with st.spinner("財務データを取得中..."):
+                    financials, _ = load_fundamental_data(ticker, 5)
+                    if financials and financials.financials:
+                        fin_df = financials_to_dataframe(financials)
+                        financial_context = fin_df.to_string()
+            except Exception:
+                financial_context = "財務データの取得に失敗しました"
+
+            st.header(f"{company_name} ({ticker})")
+
+            # Store results
+            results = {}
+
+            # Run analyses
+            progress = st.progress(0, text="分析を開始...")
+
+            total_steps = len(analysis_types) + (1 if generate_summary else 0)
+            current_step = 0
+
+            if "fundamental" in analysis_types:
+                with st.spinner("📊 ファンダメンタル分析を実行中..."):
+                    progress.progress(current_step / total_steps, text="ファンダメンタル分析中...")
+                    result = analyze_fundamental(ticker, company_name, financial_context)
+                    results["fundamental"] = result
+                current_step += 1
+
+            if "macro" in analysis_types:
+                with st.spinner("🌍 マクロ環境分析を実行中..."):
+                    progress.progress(current_step / total_steps, text="マクロ環境分析中...")
+                    result = analyze_macro(ticker, company_name, sector)
+                    results["macro"] = result
+                current_step += 1
+
+            if "risk" in analysis_types:
+                with st.spinner("⚠️ リスク評価を実行中..."):
+                    progress.progress(current_step / total_steps, text="リスク評価中...")
+                    result = analyze_risk(ticker, company_name, financial_context)
+                    results["risk"] = result
+                current_step += 1
+
+            # Generate summary if all analyses succeeded
+            if generate_summary and all(r.success for r in results.values() if r):
+                with st.spinner("📝 総合サマリーを生成中..."):
+                    progress.progress(current_step / total_steps, text="総合サマリー生成中...")
+                    summary_result = generate_investment_summary(
+                        ticker=ticker,
+                        company_name=company_name,
+                        fundamental_analysis=results.get("fundamental", {}).content if "fundamental" in results else "未実行",
+                        macro_analysis=results.get("macro", {}).content if "macro" in results else "未実行",
+                        risk_assessment=results.get("risk", {}).content if "risk" in results else "未実行",
+                    )
+                    results["summary"] = summary_result
+
+            progress.progress(1.0, text="分析完了!")
+
+            st.divider()
+
+            # Display results
+            if "summary" in results and results["summary"].success:
+                st.subheader("📝 投資判断サマリー")
+                st.markdown(results["summary"].content)
+                st.divider()
+
+            # Use tabs for detailed analyses
+            if any(k in results for k in ["fundamental", "macro", "risk"]):
+                tabs = []
+                tab_names = []
+
+                if "fundamental" in results:
+                    tab_names.append("📊 ファンダメンタル")
+                    tabs.append(results["fundamental"])
+                if "macro" in results:
+                    tab_names.append("🌍 マクロ環境")
+                    tabs.append(results["macro"])
+                if "risk" in results:
+                    tab_names.append("⚠️ リスク評価")
+                    tabs.append(results["risk"])
+
+                analysis_tabs = st.tabs(tab_names)
+
+                for i, (tab, result) in enumerate(zip(analysis_tabs, tabs)):
+                    with tab:
+                        if result.success:
+                            st.markdown(result.content)
+                        else:
+                            st.error(f"分析に失敗しました: {result.error}")
+
+        else:
+            st.info("👆 サイドバーの「AI分析を実行」ボタンをクリックして分析を開始してください")
+
+            st.markdown("""
+            ### このページでできること
+
+            Claude AI を使って、以下の包括的な投資分析を実行します：
+
+            #### 📊 ファンダメンタル分析
+            - 売上高・利益の推移分析
+            - 利益率の変化
+            - キャッシュフロー分析
+            - バリュエーション評価
+
+            #### 🌍 マクロ環境分析
+            - 金利環境の影響
+            - 為替動向
+            - 業界トレンド
+            - 規制環境・地政学リスク
+
+            #### ⚠️ リスク評価
+            - バリュエーションリスク
+            - 業績リスク
+            - マクロリスク
+            - 競合・規制リスク
+
+            #### 📝 総合サマリー
+            - 上記分析を統合したSWOT分析
+            - 投資判断のポイント
+
+            ⚠️ **免責事項**: AI分析は情報提供のみを目的としており、投資助言ではありません。
+            """)
 
 
 # =============================================================================
